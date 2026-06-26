@@ -1,184 +1,118 @@
 # 三國志14登庸
 
-# RTK14 Recruitment Log Analyzer
+# 三國志14 Recruitment Log Analyzer
 
-A Python tool for analyzing **登庸 (recruitment)** events from _Romance of the Three Kingdoms XIV_ (三國志14) game logs. It parses recruitment attempts from an Excel log, generates cleaned data and statistics, and visualizes recruiter–target relationships as network graphs.
+A small Python tool that reads a _Sangokushi 14_ (三國志14) action log, cleans up OCR noise and merged lines, and produces two recruitment shortlists in a tidy multi-sheet Excel workbook. It's built to answer two practical questions about an in-progress campaign:
 
----
+- **Who is everyone fighting over?** — which officers are being actively contested (中止登庸, "recruitment aborted"), and by how many of your recruiters.
+- **How did our recruitment efforts actually go?** — per-target field recruitment success and failure, with the names of the recruiters involved.
 
-## ✨ Features
-
-- **Log parsing** — Extracts successful, failed, cancelled, and prisoner-system recruitments from raw game log text.
-- **OCR/typo correction** — Built-in dictionary fixes common character recognition errors (e.g. `簡庸 → 簡雍`, `越雲 → 趙雲`).
-- **Statistics**
-  - Recruiter performance: total attempts, successes, failures, and success rate.
-  - Target difficulty: most-attempted targets across the campaign.
-- **Network visualizations** (PNG):
-  - ✅ Successful recruitments network
-  - ❌ Failed recruitments network
-  - ⚠️ Outstanding targets — failed targets that were _never_ recruited by anyone
-- **CJK font auto-detection** — Automatically picks a Chinese-capable font for plot labels.
+The game is KOEI TECMO's _Romance of the Three Kingdoms XIV_ — Traditional Chinese product page: https://www.gamecity.com.tw/sangokushi14/index.html
 
 ---
 
-## 📦 Requirements
+## What's in the box
 
-- Python 3.9+
-- Packages:
-  - `pandas`
-  - `numpy`
-  - `openpyxl` (for Excel I/O)
-  - `networkx`
-  - `matplotlib`
+| File                        | Role                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `dev-3.py`                  | The analyzer script.                                                                   |
+| `sangokushi14_officers.csv` | Officer dictionary — the full 1000-name roster used to split merged lines correctly.   |
+| `san14_recruitment.xlsx`    | **Your input.** A spreadsheet with an `Actions` column holding the raw game-log lines. |
+| `san14_report.xlsx`         | **The output.** A four-sheet workbook the script generates.                            |
 
-Install with:
-
-```bash
-pip install pandas numpy openpyxl networkx matplotlib
-```
-
-### Chinese font (required for proper label rendering)
-
-The script searches for one of the following installed fonts:
-
-- Microsoft JhengHei / YaHei, SimHei
-- PingFang TC/SC, Heiti TC/SC
-- Noto Sans CJK TC/SC/JP
-- WenQuanYi Zen Hei
-- Arial Unicode MS
-
-**Linux users** can install Noto CJK fonts via:
-
-```bash
-sudo apt install fonts-noto-cjk
-```
+The officer dictionary mirrors the in-game 武將一覧 (officer list): https://www.gamecity.com.tw/sangokushi14/officers-list.html — all 1000 playable characters, the largest roster in the series.
 
 ---
 
-## 📁 Input Format
+## Why the officer dictionary matters
 
-The script expects an Excel file (`.xlsx`) with at least these columns:
+Game logs are often captured by OCR, and long sessions produce two recurring problems: individual lines get visually glued together, and characters get misread. The dictionary is what lets the tool recover cleanly from the first problem.
 
-| Date     | Actions            |
-| -------- | ------------------ |
-| 200年1月 | 劉備登庸關羽成功   |
-| 200年2月 | 曹操登庸關羽失敗   |
-| 200年3月 | 中止登庸張遼       |
-| 200年4月 | 成功登庸了俘虜張郃 |
+When two complete abort events end up on one line — for example `關純中止登庸王淩田豫中止登庸王淩` — the script can't just split on the 中止登庸 marker, because it wouldn't know where one officer's name ends and the next begins. Instead it walks the line greedily, matching the **longest known name** from the dictionary at each step. Because 王淩, 田豫, 關純 and the rest are all in the roster, the line splits into two correct events without ever cutting a name in half.
 
-- **`Date`** — Any date/turn label (kept as-is for reference).
-- **`Actions`** — Raw log line. The parser matches these patterns:
-  - `{recruiter}登庸{target}成功` → Success
-  - `{recruiter}登庸{target}失敗` → Failed
-  - `{recruiter}中止登庸{target}` → Cancelled
-  - `成功登庸了俘虜{target}` → Prisoner system (recruiter recorded as `(俘虜系統)`)
-
-If the `Actions` column is missing, the script falls back to the last column of the sheet.
+The dictionary is combined with names the script auto-harvests from your own unambiguous log lines, so even officers who only appear in clean single-event rows are recognized. Together they drive the greedy splitter.
 
 ---
 
-## ⚙️ Configuration
+## Input format
 
-Edit the constants at the top of `dev.py`:
+`san14_recruitment.xlsx` should have a header row containing a column named `Actions`. Each subsequent row is one raw log line, exactly as captured. (If no `Actions` column is found, the script falls back to the last column.) A `.csv` file with the same `Actions` column also works.
 
-```python
-INPUT_FILE = "~/Downloads/san14_recruitment.xlsx"
-OUTPUT_CLEANED = "recruitment_parsed.csv"
-OUTPUT_STATS = "recruitment_stats.xlsx"
-OUTPUT_GRAPH_SUCCESS = "~/Downloads/recruitment_network_success.png"
-OUTPUT_GRAPH_FAILED  = "~/Downloads/recruitment_network_failure.png"
-OUTPUT_GRAPH_OUTSTANDING = "~/Downloads/recruitment_network_outstanding.png"
-```
+The tool understands three log mechanics:
 
-### Extending OCR fixes
-
-If your log contains other misrecognized characters, add them to the `NAME_FIXES` dictionary:
-
-```python
-NAME_FIXES = {
-    "簡庸": "簡雍",
-    "越雲": "趙雲",
-    # add your own entries here
-}
-```
-
-⚠️ Be cautious with ambiguous one-character keys — they may overcorrect unrelated text.
+- **Contested recruitment** — lines of the form `〈recruiter〉中止登庸〈target〉`, meaning a recruiter's attempt on that target was aborted (usually because someone else got there first).
+- **Field recruitment** — lines of the form `〈recruiter〉登庸〈target〉成功/失敗`, a direct success or failure.
+- **Prisoner recruitment** — lines beginning `成功登庸了俘虜…`. These carry **no recruiter name**, so by design they are recognized and skipped rather than shortlisted.
 
 ---
 
-## 🚀 Usage
+## OCR cleanup
 
-```bash
-python dev.py
-```
+Before analysis, the script normalizes three known OCR misreadings of the abort marker 中止登庸 back to the correct form:
 
-The script will:
+| Misread  | Corrected |
+| -------- | --------- |
+| 中北登庸 | 中止登庸  |
+| 中止登廉 | 中止登庸  |
+| 中止登康 | 中止登庸  |
 
-1. Load and clean the Excel log
-2. Parse all recruitment events
-3. Save a cleaned CSV (`recruitment_parsed.csv`)
-4. Generate an Excel report with three sheets:
-   - `All_Events` — every parsed recruitment
-   - `By_Recruiter` — performance per officer
-   - `By_Target` — difficulty per target
-5. Render three network PNGs (success / failure / outstanding)
-6. Print top recruiters, most-attempted targets, and outstanding targets to the console
+Every row that needed correcting is logged on the **Issues** sheet so you can audit exactly what was changed.
 
 ---
 
-## 📊 Output Files
+## The output report
 
-| File                                  | Description                                               |
-| ------------------------------------- | --------------------------------------------------------- |
-| `recruitment_parsed.csv`              | All parsed events (recruiter, target, result, type, date) |
-| `recruitment_stats.xlsx`              | Multi-sheet statistics report                             |
-| `recruitment_network_success.png`     | Green-edged graph of successful recruitments              |
-| `recruitment_network_failure.png`     | Red-edged graph of failed attempts                        |
-| `recruitment_network_outstanding.png` | Red graph of targets who escaped recruitment entirely     |
+`san14_report.xlsx` contains four sheets.
 
-### Graph legend
+**1. Original** — the raw `Actions` column exactly as ingested, with row numbers, so the report is self-contained and traceable back to your source.
 
-- **Blue nodes** — recruiters / officers
-- **Pink/red nodes** — outstanding targets (in the outstanding-network plot only)
-- **Edge thickness** — proportional to number of attempts
-- **Edge label** — shown only when the same pair attempted recruitment more than once
+**2. Issues** — every row that needed OCR normalization or that was split out of a merged line. Each entry shows the row number, the kind of issue, the specific OCR variants found, the original text, and what it was split into. If a merged line contains a name absent from both the dictionary and the harvested set, it's flagged as `UNPARSED merge - unknown name?` so you know which name to add.
+
+**3. Approaching** — _Shortlist 1, contested targets._ For each officer aborted by at least two recruiters: the abort count, whether they were ever **Secured** by field recruitment (`later` / `never`), the **Secured by** column naming the successful recruiter(s), and the **Aborted by** column listing everyone whose attempt was aborted. This is your "hot prospects" view — who's in demand and whether you ultimately landed them.
+
+**4. Efforts** — _Shortlist 2, recruitment outcomes._ For each target touched by field recruitment: the overall status (`JOINED` / `FAILED-ONLY`), field success and failure counts, and the names of the **successful** and **failed** recruiters. Where a recruiter tried more than once, the count is shown inline (e.g. `荀諶 x2`).
+
+The console prints a condensed version of both shortlists when you run the script.
 
 ---
 
-## 🗂 Project Structure
+## Requirements
+
+- Python 3.10 or newer (the code uses `str | None` type hints).
+- `openpyxl` for reading and writing `.xlsx` files:
 
 ```
-san14/
-├── dev.py                       # main analyzer script
-├── recruitment_parsed.csv       # generated
-├── recruitment_stats.xlsx       # generated
-└── README.md
+pip install openpyxl
 ```
 
 ---
 
-## 🐛 Troubleshooting
+## Usage
 
-**Chinese characters appear as boxes (`☐☐☐`)**
-Install a CJK font (see Requirements). The console will print `[font] No CJK font found` if none is detected.
+Place `dev-3.py`, `sangokushi14_officers.csv`, and your `san14_recruitment.xlsx` in the same folder, then run:
 
-**`FileNotFoundError` on the input file**
-Verify the `INPUT_FILE` path. The default is `~/Downloads/san14_recruitment.xlsx`.
+```
+python dev-3.py
+```
 
-**Regex misses some lines**
-The patterns assume names are 2–4 characters. If your log contains longer names or extra formatting (e.g. brackets, dates inline), adjust `PAT_SUCCESS`, `PAT_FAIL`, `PAT_CANCEL`, and `PAT_PRISONER` in the source.
+The script reads the log, merges the officer dictionary with names harvested from your data, analyzes everything, prints the shortlists to the console, and writes `san14_report.xlsx` alongside the inputs. On finishing it reports how many rows were processed and how many issues were logged.
 
-**Wrong recruiter or target after parsing**
-Add an entry to `NAME_FIXES` to correct OCR drift before regex matching.
+All paths are resolved relative to the script's own location, so it can be run from any working directory.
 
 ---
 
-## 📜 License
+## Customization
 
-MIT (or your preferred license — update this section accordingly).
+A few things you may want to adjust:
+
+The **minimum contest threshold** controls who appears on the _Approaching_ sheet. It defaults to 2 (a target must be aborted by at least two recruiters). Change the `min_contested=2` arguments in the `__main__` block to widen or narrow the shortlist.
+
+The **OCR variant list** (`ABORT_VARIANTS` near the top of the script) is where you add any new misreadings of 中止登庸 that show up in future captures.
+
+If your logs mix simplified and traditional forms of a name — for instance 牵招 alongside the roster's 牽招 — extend the `normalize()` function with a character fold such as `text = text.replace("牵", "牽")` so both forms match the dictionary and don't get flagged as unparsed merges.
 
 ---
 
-## 🙏 Acknowledgements
+## Notes and limitations
 
-Built for analyzing playthroughs of **Romance of the Three Kingdoms XIV** (KOEI TECMO). Not affiliated with or endorsed by the publisher.
+Prisoner-recruitment lines (`成功登庸了俘虜…`) are intentionally excluded from both shortlists because the log records no recruiter for them; they're still recognized so they're never miscounted as something else. A target who was _only_ ever captured — never contested, never field-recruited — will therefore not appear in either shortlist. And the greedy splitter is only as complete as its name set: if a genuinely merged line contains an officer missing from both the dictionary and your data, that line is left intact and flagged on the Issues sheet for manual review.
