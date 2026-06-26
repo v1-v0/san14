@@ -1,4 +1,4 @@
-# san14
+# 三國志14登庸
 
 # RTK14 Recruitment Log Analyzer
 
