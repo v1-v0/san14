@@ -36,15 +36,13 @@ NAME_FIXES = {
     "越範": "趙範",
     "顏哀": "顏良",
     "顏原": "顏良",
-    "顏": "顏良",          # ambiguous — only fix if context is clear
+    "顏隊": "顏良隊",          # ambiguous — only fix if context is clear
     "鮑傮": "鮑信",
     "張邻": "張郃",
     "張部": "張郃",
-    "張琰": "張顗",        # likely OCR drift
     "雀琰": "崔琰",
     "辣由": "蘇由",
     "穚瑁": "橋瑁",
-    "陳登": "陳琳",        # context-dependent; remove if unsure
     "三原": "平原",        # location, not person
     "頁長": "顏良",
     "顏良長": "顏良",
@@ -56,7 +54,6 @@ NAME_FIXES = {
     "登康": "登庸",
     "率招": "牽招",
     "表譚": "袁譚",
-    "袁課": "袁譚",
     "達紀": "逢紀",
     "玫以": "改以",
 }
