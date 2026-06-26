@@ -111,7 +111,7 @@ def parse_event(text):
     m = PAT_CANCEL.match(t)
     if m:
         return {"recruiter": m.group(1), "target": m.group(2),
-                "result": "Cancelled", "type": "Normal"}
+                "result": "Canceled", "type": "Normal"}
 
     return None
 
@@ -137,7 +137,7 @@ def build_stats(events):
         .groupby(["recruiter", "result"])
         .size().unstack(fill_value=0)
     )
-    for col in ["Success", "Failed", "Cancelled"]:
+    for col in ["Success", "Failed", "Canceled"]:
         if col not in recruiter_stats.columns:
             recruiter_stats[col] = 0
 
@@ -159,7 +159,7 @@ def build_stats(events):
         .groupby(["target", "result"])
         .size().unstack(fill_value=0)
     )
-    for col in ["Success", "Failed", "Cancelled"]:
+    for col in ["Success", "Failed", "Canceled"]:
         if col not in target_stats.columns:
             target_stats[col] = 0
     target_stats["Total_Attempts"] = (
