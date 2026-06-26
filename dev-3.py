@@ -3,7 +3,7 @@ Parse a 三國志14 (Sangokushi 14) action log and produce two shortlists,
 then export the original data, detected OCR/merge issues, and both
 shortlists to a new multi-sheet .xlsx file.
 
-  Sheet 1 (Original)            - the raw Date + Actions columns as ingested.
+  Sheet 1 (Original)            - the raw Actions column as ingested.
   Sheet 2 (Issues)              - rows that needed OCR normalization or splitting.
   Sheet 3 (Shortlist1_Contested)- contested 中止登庸 targets, counted.
   Sheet 4 (Shortlist2_Outcomes) - full acquisition outcome per target.
@@ -15,14 +15,10 @@ from collections import defaultdict, Counter
 
 
 # ---------------------------------------------------------------------------
-# 1. Load the "Date" + "Actions" columns
+# 1. Load the "Actions" column
 # ---------------------------------------------------------------------------
-def load_actions(path: str) -> list[tuple[str, str]]:
-    """
-    Read the 'Date' and 'Actions' columns from an .xlsx (preferred) or .csv
-    file. Returns a list of (date, action) tuples in source order. Rows with
-    no action text are skipped; a missing/blank date becomes "".
-    """
+def load_actions(path: str) -> list[str]:
+    """Read the 'Actions' column from an .xlsx (preferred) or .csv file."""
     if path.lower().endswith(".xlsx"):
         import openpyxl  # pip install openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -37,30 +33,20 @@ def load_actions(path: str) -> list[tuple[str, str]]:
 
         header = [str(c).strip() if c is not None else "" for c in header_row]
         try:
-            act_col = header.index("Actions")
+            col = header.index("Actions")
         except ValueError:
-            act_col = len(header) - 1  # fall back to last column
-        try:
-            date_col = header.index("Date")
-        except ValueError:
-            date_col = None  # no date column present
+            col = len(header) - 1  # fall back to last column
 
-        rows: list[tuple[str, str]] = []
+        rows = []
         for r in rows_iter:
-            if r and act_col < len(r) and r[act_col]:
-                action = str(r[act_col]).strip()
-                date = ""
-                if date_col is not None and date_col < len(r) and r[date_col]:
-                    date = str(r[date_col]).strip()
-                rows.append((date, action))
+            if r and col < len(r) and r[col]:
+                rows.append(str(r[col]).strip())
         return rows
     else:  # CSV fallback
+        import csv
         with open(path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            return [
-                ((row.get("Date") or "").strip(), row["Actions"].strip())
-                for row in reader if row.get("Actions")
-            ]
+            return [row["Actions"].strip() for row in reader if row.get("Actions")]
 
 
 # ---------------------------------------------------------------------------
@@ -288,12 +274,8 @@ def _autosize(ws, max_width=80):
         ws.column_dimensions[col_letter].width = min(width + 2, max_width)
 
 
-def export_xlsx(out_path, records, contested, contested_who,
+def export_xlsx(out_path, actions, contested, contested_who,
                 outcomes, issues, min_contested=2):
-    """
-    `records` is a list of (date, action) tuples in source order. The Issues
-    sheet still references 1-based row numbers that line up with this order.
-    """
     import openpyxl
     from openpyxl.styles import Font, Alignment
 
@@ -307,9 +289,9 @@ def export_xlsx(out_path, records, contested, contested_who,
         ws1 = wb.create_sheet("Original")
     else:
         ws1.title = "Original"
-    ws1.append(["Row", "Date", "Actions"])
-    for idx, (date, raw) in enumerate(records, start=1):
-        ws1.append([idx, date, raw])
+    ws1.append(["Row", "Actions"])
+    for idx, raw in enumerate(actions, start=1):
+        ws1.append([idx, raw])
     for c in ws1[1]:
         c.font = header_font
 
@@ -324,7 +306,7 @@ def export_xlsx(out_path, records, contested, contested_who,
     if not issues:
         ws2.append(["(none)", "No OCR or merge issues detected", "", "", ""])
 
-    # --- Sheet 3: Shortlist 1 (Contested) ----------------------------------
+# --- Sheet 3: Shortlist 1 (Contested) ----------------------------------
     ws3 = wb.create_sheet("Approaching")
     ws3.append(["Target", "Abort count", "Secured?", "Secured by", "Aborted by"])
     for tgt, cnt in contested.most_common():
@@ -372,7 +354,7 @@ def export_xlsx(out_path, records, contested, contested_who,
 
     wb.save(out_path)
     print(f"\nExported workbook -> {out_path}")
-    print(f"  Original rows : {len(records)}")
+    print(f"  Original rows : {len(actions)}")
     print(f"  Issues logged : {len(issues)}")
 
 
@@ -383,9 +365,7 @@ if __name__ == "__main__":
     ROSTER = os.path.join(HERE, "sangokushi14_officers.csv")
     OUT    = os.path.join(HERE, "san14_report.xlsx")
 
-    # records: list of (date, action); actions: just the text for analysis.
-    records = load_actions(PATH)
-    actions = [action for _date, action in records]
+    actions = load_actions(PATH)
 
     # Combine the static officer roster (CSV) with names auto-harvested
     # from unambiguous rows. The union is what drives greedy splitting.
@@ -393,5 +373,5 @@ if __name__ == "__main__":
 
     contested, contested_who, outcomes, issues = analyze(actions, names)
     report(contested, contested_who, outcomes, min_contested=2)
-    export_xlsx(OUT, records, contested, contested_who,
+    export_xlsx(OUT, actions, contested, contested_who,
                 outcomes, issues, min_contested=2)
