@@ -22,7 +22,9 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 OUTPUT = "san14_skeleton.xlsx"
-SCHEMA_VERSION = 3   # bumped: events gained `ambiguous_id`
+SCHEMA_VERSION = 4   # bumped: +appoint/besiege/explore patterns;
+                     #         events gained parent_location, issuer, office;
+                     #         new color_roles contract sheet
 
 # ----------------------------------------------------------------------
 # Safety guard — never overwrite an existing (possibly populated) file
@@ -105,6 +107,7 @@ people_seed = [
     [5, "司馬懿", "=LEN(B6)", True],
     [6, "于禁",   "=LEN(B7)", True],
     [7, "王淩",   "=LEN(B8)", True],
+    [8, "獻帝",   "=LEN(B9)", True],   # NEW: appoint issuer (court figure)
 ]
 make_table(
     ws, "tblPeople",
@@ -123,6 +126,9 @@ geo_seed = [
     ["許昌", "都市", "豫州", "潁川郡", "=LEN(A3)", ""],
     ["成都", "都市", "益州", "蜀郡",   "=LEN(A4)", ""],
     ["虎牢關", "關隘", "司州", "河南尹", "=LEN(A5)", "len-3 example"],
+    ["平原", "都市", "青州", "平原國", "=LEN(A6)", "parent_location example"],
+    ["高唐", "都市", "青州", "平原國", "=LEN(A7)", "child of 平原"],
+    ["街亭", "關隘", "雍州", "天水郡", "=LEN(A8)", "besiege example"],
 ]
 make_table(
     ws, "tblGeo",
@@ -133,32 +139,63 @@ make_table(
 
 # ======================================================================
 # 3) patterns  ->  tblPatterns  (Stage-4 grammar registry, priority-ordered)
+#    NEW: appoint(15), besiege(32), explore(50)
+#    MOD: capture now accepts [軍隊] + optional (所屬於<parent>)
 # ======================================================================
 ws = wb.create_sheet("patterns")
 patterns_seed = [
     ["recruit",  r"^(?P<subject>.{2,4}?)登庸(?P<object>.{2,4}?)(?P<result>成功|失敗)$",
      slots(subject="people", object="people"), 10, True, "劉備登庸王淩成功"],
+    ["appoint",  r"^(?P<subject>.{2,4}?)接受(?P<issuer>.{1,4}?)敕令[，,]就任(?P<office>.{2,6}?)$",
+     slots(subject="people", issuer="people", office="raw"), 15, True, "士燮接受獻帝敕令，就任州刺史"],
     ["promote",  r"^(?P<object>.{2,4}?)就任(?P<subject>.{2,4}?)勢力君主$",
      slots(subject="people", object="people"), 20, True, "曹操就任劉備勢力君主"],
     ["destroy",  r"^(?P<target_faction>.{2,4}?)軍(?:勢力)?滅(?:止|亡)$",
      slots(target_faction="people"), 20, True, "袁紹軍滅止"],
-    ["capture",  r"^(?P<subject>.{2,4}?)軍(?:攻陷|攻略|占領)(?P<location>.{1,3}?)$",
-     slots(subject="people", location="places"), 30, True, "曹操軍攻陷許昌"],
+    ["capture",  r"^(?P<subject>.{2,4}?)[軍隊](?:攻陷|攻略|占領)(?P<location>.{1,3}?)(?:[（(]所屬於(?P<parent>.{1,3}?)[）)])?$",
+     slots(subject="people", location="places", parent="places"), 30, True, "張飛隊占領高唐(所屬於平原)"],
+    ["besiege",  r"^(?:(?P<subject>.{2,4}?)[軍隊])?已?包圍(?P<location>.{1,3}?)$",
+     slots(subject="people", location="places"), 32, True, "已包圍街亭"],
     ["march",    r"^(?P<subject>.{2,4}?)隊(?:向|往)?(?P<location>.{1,3}?)出陣$",
      slots(subject="people", location="places"), 40, True, "于禁隊向許昌出陣"],
+    ["explore",  r"^(?P<subject>.{2,4}?)探索(?P<location>.{1,3}?)(?P<result>成功|失敗)$",
+     slots(subject="people", location="places"), 50, True, "崔琰探索平原失敗"],
 ]
 make_table(
     ws, "tblPatterns",
     ["action_type", "regex", "slots", "priority", "confirmed", "example"],
     patterns_seed,
-    widths=[14, 52, 34, 10, 12, 22],
+    widths=[14, 58, 40, 10, 12, 26],
 )
 for col in ("B", "C"):
     for cell in ws[col]:
         cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 # ======================================================================
-# 4) factions  ->  tblFactions  (ruler state; subset of people)
+# 4) color_roles  ->  tblColorRoles  (gate contract; HSV numbers live in dict)
+#    Cross-checked AFTER regex parse. The skeleton holds the RULE
+#    (location must be blue, else demote); san14_dict holds the
+#    MEASUREMENT (blue = these H/S/V ranges). Recalibration touches dict only.
+# ======================================================================
+ws = wb.create_sheet("color_roles")
+color_roles_seed = [
+    ["location",        "blue",       "demote",  "→ tblPending"],
+    ["parent_location", "blue",       "demote",  "capture only"],
+    ["subject_own",     "green",      "demote",  "own / allied actor"],
+    ["subject_hostile", "red",        "demote",  "hostile actor"],
+    ["target_faction",  "red",        "demote",  "destroy"],
+    ["issuer",          "red|white",  "warn",    "court ≠ player faction; keep on mismatch"],
+    ["office",          "any",        "ignore",  "raw slot; NEVER a dedup key or anchor"],
+]
+make_table(
+    ws, "tblColorRoles",
+    ["slot", "expected_color", "on_mismatch", "note"],
+    color_roles_seed,
+    widths=[18, 16, 14, 36],
+)
+
+# ======================================================================
+# 5) factions  ->  tblFactions  (ruler state; subset of people)
 # ======================================================================
 ws = wb.create_sheet("factions")
 factions_seed = [
@@ -175,22 +212,26 @@ make_table(
 )
 
 # ======================================================================
-# 5) events  ->  tblEvents  (Stage-5 master output; starts EMPTY)
-#    NEW: ambiguous_id  — set when a `people` slot resolves to >1 id
+# 6) events  ->  tblEvents  (Stage-5 master output; starts EMPTY)
+#    NEW columns vs schema v3:
+#      issuer          — appoint (people-verified)
+#      parent_location — capture; PERSISTED per decision (places-verified)
+#      office          — appoint; RAW, NOT vocab-verified, NEVER a dedup key
+#    Retained: ambiguous_id (set when a `people` slot resolves to >1 id)
 # ======================================================================
 ws = wb.create_sheet("events")
 events_headers = [
     "date", "turn_period", "ruler", "action_type", "subject", "object",
-    "ambiguous_id", "location", "target_faction", "value", "success",
-    "confidence", "raw_text",
+    "issuer", "ambiguous_id", "location", "parent_location",
+    "target_faction", "office", "value", "success", "confidence", "raw_text",
 ]
 make_table(
     ws, "tblEvents", events_headers, [], empty_row=True,
-    widths=[12, 10, 10, 12, 10, 10, 12, 10, 12, 8, 9, 11, 30],
+    widths=[12, 10, 10, 12, 10, 10, 10, 12, 10, 14, 12, 12, 8, 9, 11, 30],
 )
 
 # ======================================================================
-# 6) pending  ->  tblPending  (Stage-4 unmatched / low-conf queue; EMPTY)
+# 7) pending  ->  tblPending  (Stage-4 unmatched / low-conf queue; EMPTY)
 # ======================================================================
 ws = wb.create_sheet("pending")
 make_table(
@@ -202,7 +243,7 @@ make_table(
 )
 
 # ======================================================================
-# 7) log_raw  ->  tblLogRaw  (raw OCR audit trail; EMPTY)
+# 8) log_raw  ->  tblLogRaw  (raw OCR audit trail; EMPTY)
 # ======================================================================
 ws = wb.create_sheet("log_raw")
 make_table(
@@ -213,7 +254,7 @@ make_table(
 )
 
 # ======================================================================
-# 8) meta  ->  meta_kv  (run state / schema + derived counts)
+# 9) meta  ->  meta_kv  (run state / schema + derived counts)
 # ======================================================================
 ws = wb.create_sheet("meta")
 make_table(
@@ -225,6 +266,7 @@ make_table(
         ["people_count",      "=COUNTA(tblPeople[name])"],
         ["places_count",      "=COUNTA(tblGeo[據點名稱])"],
         ["faction_count",     "=COUNTIF(tblFactions[is_ruler], TRUE)"],
+        ["pattern_count",     "=COUNTA(tblPatterns[action_type])"],
         ["people_len_buckets", "2-4"],
         ["places_len_buckets", "1-3"],
     ],
@@ -242,7 +284,7 @@ def add_bool_dv(ws, col_letter, first=2, last=5000):
 add_bool_dv(wb["people"],   "D")   # active
 add_bool_dv(wb["factions"], "B")   # is_ruler
 add_bool_dv(wb["patterns"], "E")   # confirmed
-add_bool_dv(wb["events"],   "K")   # success  (shifted by new ambiguous_id col)
+add_bool_dv(wb["events"],   "N")   # success  (shifted: +issuer/parent_location/office)
 add_bool_dv(wb["pending"],  "G")   # resolved
 
 # action_type dropdown on events, sourced from the patterns column
@@ -252,10 +294,17 @@ dv_action = DataValidation(
 wb["events"].add_data_validation(dv_action)
 dv_action.add("D2:D5000")
 
+# on_mismatch dropdown on color_roles (governs gate behaviour)
+dv_mismatch = DataValidation(
+    type="list", formula1='"demote,warn,ignore"', allow_blank=True
+)
+wb["color_roles"].add_data_validation(dv_mismatch)
+dv_mismatch.add("C2:C500")
+
 # ----------------------------------------------------------------------
 # Sheet order & save (public move_sheet API, front-to-back insertion)
 # ----------------------------------------------------------------------
-order = ["meta", "people", "geo", "patterns", "factions",
+order = ["meta", "people", "geo", "patterns", "color_roles", "factions",
          "events", "pending", "log_raw"]
 for target_idx, name in enumerate(order):
     cur_idx = wb.sheetnames.index(name)
@@ -263,5 +312,5 @@ for target_idx, name in enumerate(order):
         wb.move_sheet(name, offset=target_idx - cur_idx)
 
 wb.save(OUTPUT)
-print(f"✓ {OUTPUT} created — 8 sheets, 8 named tables, schema v{SCHEMA_VERSION}.")
+print(f"✓ {OUTPUT} created — 9 sheets, 9 named tables, schema v{SCHEMA_VERSION}.")
 print("  events / pending / log_raw start with one blank table row (just type in it).")
