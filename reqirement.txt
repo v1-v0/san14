@@ -1,0 +1,7 @@
+openpyxl>=3.1
+rapidfuzz>=3.6
+Pillow>=10.0
+numpy>=1.26
+# OCR (optional at dev time; stub engine works without it)
+paddleocr>=2.7
+paddlepaddle>=2.6
