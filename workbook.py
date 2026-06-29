@@ -12,6 +12,16 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, range_boundaries
 
 
+def _bounds(ref: str) -> tuple[int, int, int, int]:
+    """range_boundaries() is typed as returning int|None per element; a valid
+    table ref always yields four ints. Narrow once here so callers get clean
+    int arithmetic (and Pylance stops flagging every + / > / range())."""
+    c0, r0, c1, r1 = range_boundaries(ref)
+    if c0 is None or r0 is None or c1 is None or r1 is None:
+        raise ValueError(f"invalid range ref: {ref!r}")
+    return c0, r0, c1, r1
+
+
 class Workbook:
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -28,12 +38,12 @@ class Workbook:
     # --- read ---------------------------------------------------------
     def headers(self, table: str) -> list[str]:
         ws = self._index[table]
-        c0, r0, c1, _ = range_boundaries(ws.tables[table].ref)
+        c0, r0, c1, _ = _bounds(ws.tables[table].ref)
         return [ws.cell(row=r0, column=c).value for c in range(c0, c1 + 1)]
 
     def rows(self, table: str) -> list[dict]:
         ws = self._index[table]
-        c0, r0, c1, r1 = range_boundaries(ws.tables[table].ref)
+        c0, r0, c1, r1 = _bounds(ws.tables[table].ref)
         hdr = self.headers(table)
         out = []
         for r in range(r0 + 1, r1 + 1):
@@ -47,7 +57,7 @@ class Workbook:
     def append_rows(self, table: str, records: Iterable[list]) -> int:
         ws = self._index[table]
         tab = ws.tables[table]
-        c0, r0, c1, r1 = range_boundaries(tab.ref)
+        c0, r0, c1, r1 = _bounds(tab.ref)
         # If table is header-only, r1 == r0.
         next_row = r1 + 1 if r1 > r0 or self._has_data(ws, c0, r0, c1) else r0 + 1
         n = 0
@@ -62,7 +72,7 @@ class Workbook:
         return n
 
     @staticmethod
-    def _has_data(ws, c0, r0, c1) -> bool:
+    def _has_data(ws, c0: int, r0: int, c1: int) -> bool:
         return any(ws.cell(row=r0 + 1, column=c).value is not None
                    for c in range(c0, c1 + 1))
 
@@ -76,7 +86,7 @@ class Workbook:
     def set_meta(self, key: str, value) -> None:
         ws = self._index["meta_kv"]
         tab = ws.tables["meta_kv"]
-        c0, r0, c1, r1 = range_boundaries(tab.ref)
+        c0, r0, c1, r1 = _bounds(tab.ref)
         hdr = self.headers("meta_kv")
         kcol = c0 + hdr.index("key")
         vcol = c0 + hdr.index("value")
@@ -92,7 +102,7 @@ class Workbook:
     def upsert(self, table: str, key_col: str, key_val, updates: dict) -> None:
         ws = self._index[table]
         tab = ws.tables[table]
-        c0, r0, c1, r1 = range_boundaries(tab.ref)
+        c0, r0, c1, r1 = _bounds(tab.ref)
         hdr = self.headers(table)
         kidx = c0 + hdr.index(key_col)
         for r in range(r0 + 1, r1 + 1):
@@ -106,5 +116,3 @@ class Workbook:
 
     def save(self) -> None:
         self.wb.save(self.path)
-    
-    

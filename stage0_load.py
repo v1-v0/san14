@@ -37,14 +37,15 @@ class FactionState:
         st = cls()
         for r in rows:
             fid = r.get("faction_id")
+            rid = r.get("ruler_id")
             st.by_id[fid] = {
                 "faction_name": r.get("faction_name"),
-                "ruler_id": r.get("ruler_id"),
+                "ruler_id": rid,
                 "ruler_name": r.get("ruler_name"),
                 "active": bool(r.get("active", True)),
             }
-            if r.get("ruler_id") is not None:
-                st.ruler_ids.add(r.get("ruler_id"))
+            if rid is not None:
+                st.ruler_ids.add(rid)
         return st
 
     def is_ruler(self, person_id: int) -> bool:
@@ -93,9 +94,10 @@ def load_vocab(dict_path=config.DICT_XLSX) -> tuple[Vocab, Workbook]:
     people_by_name: dict[str, list[int]] = {}
     for r in wb.rows("tblPeople"):
         nm, pid = r.get("name"), r.get("id")
-        if nm is None:
+        if nm is None or pid is None:
             continue
         people_by_name.setdefault(str(nm), []).append(pid)
+        
     people_by_len = _bucket(people_by_name.keys(), config.PEOPLE_LEN_BUCKETS)
 
     # PLACES — set + buckets 1..3 (single-char 據點 exist)

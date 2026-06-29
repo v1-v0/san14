@@ -87,7 +87,8 @@ def run(engine: OCREngine | None = None, halt_on_quarantine: bool = False
             if not cl.cleaned:
                 continue
             ev, pend = stage4.parse(cl, ruler_name, date_str)
-            if pend is not None:
+            if ev is None:
+                assert pend is not None
                 pend.screenshot_id = job.screenshot_id
                 pending.append(pend)
                 continue

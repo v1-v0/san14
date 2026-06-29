@@ -1,69 +1,85 @@
-"""Stage 0.5 — Ingest. Scan inbox -> ordered, resumed worklist.
+"""Stage 1 — Per-Screenshot. Crop ROIs, OCR, verify date monotonicity,
+reverse the (newest-on-top) event log to chronological.
 
-[REPLACE] in Phase 2 by frame-reduction. Lexicographic stem order ==
-chronological. Resume on meta.last_screenshot high-water mark.
+[KEEP+] in Phase 2. Emits ROI bbox+confidence to recon §B.
 """
 from __future__ import annotations
 
 import logging
+import re
 import shutil
-from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+import numpy as np
+from PIL import Image
 
 from . import config
-from .models import ScreenshotJob
+from .models import CaptureResult, GameDate, ROIResult, ScreenshotJob
+from .ocr import OCREngine, StubOCREngine
+from .recon import ReconSink
 
-log = logging.getLogger("san14.ingest")
+log = logging.getLogger("san14.capture")
+
+_DATE_RE = re.compile(r"(?P<y>\d{2,4})\s*年\s*(?P<m>\d{1,2})\s*月")
 
 
-def _quarantine(path: Path, reason: str) -> None:
+class DateDecrease(Exception):
+    pass
+
+
+class UnreadableDate(Exception):
+    pass
+
+
+def _crop(img: Image.Image, frac) -> tuple[Image.Image, tuple[int, int, int, int]]:
+    w, h = img.size
+    x0, y0, x1, y1 = frac
+    box = (int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h))
+    return img.crop(box), box
+
+
+def parse_game_date(texts: list[str]) -> Optional[GameDate]:
+    for t in texts:
+        m = _DATE_RE.search(t.replace(" ", ""))
+        if m:
+            y = int(m["y"])
+            if y < 100:           # tolerate 2-digit OCR; map naively
+                y += 100
+            return GameDate(year=y, month=int(m["m"]))
+    return None
+
+
+def capture(job: ScreenshotJob, engine: OCREngine, recon: ReconSink,
+            running_max: Optional[GameDate]) -> tuple[CaptureResult, GameDate]:
+    """Returns (CaptureResult, new running_max). Raises on quarantine cause."""
+    img = Image.open(job.path).convert("RGB")
+
+    rois: dict[str, ROIResult] = {}
+    for name, frac in config.ROIS.items():
+        crop, box = _crop(img, frac)
+        if isinstance(engine, StubOCREngine):
+            engine.set_context(job.screenshot_id, name)
+        lines = engine.read(np.asarray(crop))
+        roi = ROIResult(name=name, crop_box=box, lines=lines)
+        rois[name] = roi
+        recon.log_roi(job.screenshot_id, roi)   # feeds ROI Variance Map (§B)
+
+    # (c) date_box must be readable and non-decreasing
+    gd = parse_game_date(rois["date_box"].texts)
+    if gd is None:
+        raise UnreadableDate("date_box unreadable")
+    if running_max is not None and gd.key < running_max.key:
+        raise DateDecrease(f"{gd} < {running_max} (out-of-order / missed turn)")
+    new_max = gd if running_max is None or gd.key > running_max.key else running_max
+
+    # event log is newest-on-top -> reverse to chronological
+    event_log = list(reversed(rois["event_log_box"].texts))
+
+    result = CaptureResult(job=job, rois=rois, game_date=gd, event_log=event_log)
+    return result, new_max
+
+
+def quarantine_image(path: Path, reason: str) -> None:
     log.warning("quarantine %s : %s", path.name, reason)
     shutil.move(str(path), str(config.QUARANTINE_DIR / path.name))
-
-
-def build_worklist(last_screenshot: str | None) -> list[ScreenshotJob]:
-    candidates: list[ScreenshotJob] = []
-
-    for p in sorted(config.SCREENSHOTS_DIR.iterdir()):
-        if not p.is_file():
-            continue
-        # (a) skip hidden / non-image
-        if p.name.startswith(".") or p.suffix.lower() not in config.IMAGE_EXTS:
-            log.debug("skip non-image %s", p.name)
-            continue
-        # (b) parse stem; non-conforming -> quarantine + warn
-        m = config.STEM_RE.match(p.stem)
-        if not m:
-            _quarantine(p, "non-conforming filename")
-            continue
-        try:
-            dt = datetime.strptime(m["d"] + m["t"], "%Y%m%d%H%M%S")
-        except ValueError:
-            _quarantine(p, "unparseable datetime in stem")
-            continue
-        candidates.append(ScreenshotJob(path=p, screenshot_id=p.stem, capture_dt=dt))
-
-    # (c) sort lexicographically by stem (big-endian -> chronological)
-    candidates.sort(key=lambda j: j.screenshot_id)
-
-    # detect same-second collisions -> warn (stable sort keeps arbitrary order)
-    for a, b in zip(candidates, candidates[1:]):
-        if a.screenshot_id == b.screenshot_id:
-            log.warning("same-second collision: %s (arbitrary tie order)",
-                        a.screenshot_id)
-
-    # (d) resume: skip stems <= last_screenshot; warn on older straggler
-    worklist: list[ScreenshotJob] = []
-    if last_screenshot:
-        for j in candidates:
-            if j.screenshot_id <= last_screenshot:
-                log.warning("straggler with older/seen stem dropped in inbox: %s",
-                            j.screenshot_id)
-                continue
-            worklist.append(j)
-    else:
-        worklist = candidates
-
-    log.info("ingest: %d image(s) queued (resume cursor=%s)",
-             len(worklist), last_screenshot or "<fresh>")
-    return worklist
