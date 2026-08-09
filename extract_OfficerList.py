@@ -1,4 +1,4 @@
-import re, csv, requests
+import re, csv, requests, os
 from bs4 import BeautifulSoup
 
 URL = "https://www.gamecity.com.tw/sangokushi14/officers-list.html"
@@ -19,7 +19,11 @@ for a, b in zip(tokens, tokens[1:]):
 rows = [(n, pairs[n]) for n in sorted(pairs)]
 print("count =", len(rows))                      # expect 1000
 
-with open("sangokushi14_officers.csv", "w", newline="", encoding="utf-8-sig") as f:
+# Save to CSV under local Downloads folder
+downloads = os.path.expanduser("~/Downloads")
+os.makedirs(downloads, exist_ok=True)
+outfile = os.path.join(downloads, "sangokushi14_officers.csv")
+with open(outfile, "w", newline="", encoding="utf-8-sig") as f:
     w = csv.writer(f)
     w.writerow(["no", "name"])
     w.writerows(rows)
